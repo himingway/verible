@@ -14,13 +14,14 @@
  */
 
 %code requires{
+#include "verible/common/parser/glr-symbol-value.h"
 #include "verible/common/parser/parser-param.h"
 }
 
 %{
 /**
 verilog.y
-yacc/bison LR(1) grammar for SystemVerilog.
+yacc/bison GLR grammar for SystemVerilog.
 
 The syntax tree constructed by the semantic actions in this file are
 fragile and subject to change without notice.
@@ -33,6 +34,7 @@ Functionality that relies directly on this structure should be isolated under
 #include <type_traits>  // std::is_same
 
 #include "verible/common/parser/bison-parser-common.h"
+#include "verible/common/parser/glr-symbol-value.h"
 #include "verible/common/text/tree-utils.h"
 #include "verible/common/util/casts.h"
 #include "verible/common/util/logging.h"
@@ -75,8 +77,40 @@ using verible::SymbolCastToNode;
 using verible::SymbolPtr;
 using verible::SyntaxTreeNode;
 using verible::down_cast;
+using verible::GlrSymbolValue;
+
+// GLR-compatible overloads for functions that take SymbolPtr& parameters.
+// GlrSymbolValue holds a raw pointer; these overloads handle the conversion.
+
+// ForwardChildren for GlrSymbolValue: takes ownership via operator SymbolPtr().
+struct GlrForwardChildren {
+  explicit GlrForwardChildren(GlrSymbolValue &symbol)  // NOLINT
+      : node(symbol) {}
+  operator ForwardChildren() { return ForwardChildren(node); }
+  SymbolPtr node;
+};
+
+// SetChild overloads for GlrSymbolValue parent.
+template <typename T>
+static void SetChild(const GlrSymbolValue& parent, int child_index,
+                     T&& new_child) {
+  CHECK(parent.get() != nullptr);
+  CHECK(parent->Kind() == verible::SymbolKind::kNode);
+  auto& node = down_cast<SyntaxTreeNode&>(*parent);
+  CHECK(child_index >= 0);
+  CHECK(static_cast<size_t>(child_index) < node.size());
+  CHECK(node[child_index] == nullptr);
+  node[child_index] = std::forward<T>(new_child);
+}
 
 using N = NodeEnum;
+
+// Non-owning check: examines a GlrSymbolValue without consuming it.
+static bool IsExpressionValue(const verible::Symbol& symbol) {
+  if (symbol.Kind() != verible::SymbolKind::kNode) return false;
+  const auto& node = verible::down_cast<const verible::SyntaxTreeNode&>(symbol);
+  return node.MatchesTag(N::kExpression);
+}
 
 constexpr std::nullptr_t qualifier_placeholder = nullptr;
 constexpr std::nullptr_t expression_placeholder = nullptr;
@@ -90,7 +124,7 @@ static std::nullptr_t Recover() {
 // Transforms:
 // (sublist, separator), item -> sublist +separator +item
 // TODO(fangism): if generally useful, factor into concrete_syntax_tree.h
-static SymbolPtr ExtendFirstSublist(SymbolPtr& pair, SymbolPtr item) {
+static SymbolPtr ExtendFirstSublist(SymbolPtr pair, SymbolPtr item) {
   // pair node is a 2-tuple (sublist, separator),
   // where sublist is a SyntaxTreeNode.
   auto& pair_node = down_cast<SyntaxTreeNode&>(*pair);
@@ -101,7 +135,7 @@ static SymbolPtr ExtendFirstSublist(SymbolPtr& pair, SymbolPtr item) {
 
 // Transforms:
 // (..., sublist), item -> (..., sublist +item)
-static SymbolPtr ExtendLastSublist(SymbolPtr& list, SymbolPtr& item) {
+static SymbolPtr ExtendLastSublist(SymbolPtr list, SymbolPtr item) {
   auto& list_node = down_cast<SyntaxTreeNode&>(*list);
   auto& last_sublist = down_cast<SyntaxTreeNode&>(
       *list_node.back());
@@ -112,7 +146,7 @@ static SymbolPtr ExtendLastSublist(SymbolPtr& list, SymbolPtr& item) {
 // Transforms:
 // ((..., sublist), separator), item -> (..., sublist +separator +item)
 static SymbolPtr ExtendLastSublistWithSeparator(
-    SymbolPtr& pair, SymbolPtr& item) {
+    SymbolPtr pair, SymbolPtr item) {
   auto& pair_node = down_cast<SyntaxTreeNode&>(*pair);
   auto& list = pair_node[0];
   auto& separator = pair_node[1];
@@ -126,24 +160,26 @@ static SymbolPtr ExtendLastSublistWithSeparator(
 // (Below): These helper forwarding functions help ensure consistent structure,
 // and check that the correct number of arguments are passed:
 
-static SymbolPtr MakePackedDimensionsNode(SymbolPtr& arg) {
-  return MakeTaggedNode(N::kPackedDimensions, arg);
+static SymbolPtr MakePackedDimensionsNode(SymbolPtr arg) {
+  return MakeTaggedNode(N::kPackedDimensions, std::move(arg));
 }
 
-static SymbolPtr MakeUnpackedDimensionsNode(SymbolPtr& arg) {
-  return MakeTaggedNode(N::kUnpackedDimensions, arg);
+static SymbolPtr MakeUnpackedDimensionsNode(SymbolPtr arg) {
+  return MakeTaggedNode(N::kUnpackedDimensions, std::move(arg));
 }
 
 %}
 
 %debug
 %verbose
+%glr-parser
 %expect 0
+%expect-rr 0
 %define api.pure
 %param { ::verible::ParserParam* param }
 /* TODO(fangism): this prefix name should point to an adaptation of yylex */
 %define api.prefix {verilog_}
-%define api.value.type {::verible::SymbolPtr}
+%define api.value.type {::verible::GlrSymbolValue}
 
 // The string representation of this token changes between bison versions.
 // Fix it to keep unit tests happy that look for this string.
@@ -939,9 +975,9 @@ assignment_pattern_expression
   | data_type_base assignment_pattern
     { $$ = MakeTaggedNode(N::kAssignmentPatternExpression, $1, $2); }
   | reference assignment_pattern
-    { $$ = MakeTaggedNode(N::kAssignmentPatternExpression, ReinterpretReferenceAsDataTypePackedDimensions($1), $2); }
+    { SymbolPtr tmp($1); $$ = MakeTaggedNode(N::kAssignmentPatternExpression, ReinterpretReferenceAsDataTypePackedDimensions(tmp), $2); }
   | reference call_base assignment_pattern
-    { $$ = MakeTaggedNode(N::kAssignmentPatternExpression, ReinterpretReferenceAsDataTypePackedDimensions($1), $2, $3); }
+    { SymbolPtr tmp($1); $$ = MakeTaggedNode(N::kAssignmentPatternExpression, ReinterpretReferenceAsDataTypePackedDimensions(tmp), $2, $3); }
   ;
 structure_or_array_pattern_expression_list
   : structure_or_array_pattern_expression_list ',' structure_or_array_pattern_expression
@@ -1163,7 +1199,7 @@ class_item
   | class_constructor
     { $$ = std::move($1); }
   | TK_virtual method_qualifier_list_opt class_constructor
-    { SetChild($3, 0, MakeTaggedNode(N::kQualifierList, $1, ForwardChildren($2)));
+    { SetChild($3, 0, MakeTaggedNode(N::kQualifierList, $1, GlrForwardChildren($2)));
       $$ = std::move($3); }
 
   /* originally: property_qualifier_list_opt data_type list_of_variable_decl_assignments ';' */
@@ -1185,7 +1221,7 @@ class_item
                           $3); }
   | TK_const class_item_qualifier_list_opt data_type list_of_variable_decl_assignments ';'
     { $$ = MakeDataDeclaration(
-                          MakeTaggedNode(N::kQualifierList, $1, ForwardChildren($2)),
+                          MakeTaggedNode(N::kQualifierList, $1, GlrForwardChildren($2)),
                           MakeInstantiationBase(
                               MakeTaggedNode(N::kInstantiationType, $3),
                               $4),
@@ -1211,7 +1247,7 @@ class_item
     { $$ = std::move($1); }
   | TK_virtual method_qualifier_list_opt task_declaration
     { SetChild(SymbolCastToNode(*$3)[0] /* kTaskHeader */, 0,
-          MakeTaggedNode(N::kQualifierList, $1, ForwardChildren($2)));
+          MakeTaggedNode(N::kQualifierList, $1, GlrForwardChildren($2)));
       $$ = std::move($3); }
   /* TODO(fangism): Method qualifiers should be grouped together into one list,
    * rather than being split between virtual and method_qualifier list.
@@ -1223,21 +1259,21 @@ class_item
     { $$ = std::move($1); }
   | TK_virtual method_qualifier_list_opt function_declaration
     { SetChild(SymbolCastToNode(*$3)[0] /* kFunctionHeader */, 0,
-          MakeTaggedNode(N::kQualifierList, $1, ForwardChildren($2)));
+          MakeTaggedNode(N::kQualifierList, $1, GlrForwardChildren($2)));
       $$ = std::move($3); }
   /* pure virtual method prototypes: */
   | TK_pure TK_virtual class_item_qualifier_list_opt method_prototype ';'
    { $$ = MakeTaggedNode(N::kForwardDeclaration,
-                        MakeTaggedNode(N::kQualifierList, $1, $2, ForwardChildren($3)),
+                        MakeTaggedNode(N::kQualifierList, $1, $2, GlrForwardChildren($3)),
                         ExtendLastSublist($4, $5) /* kTaskHeader or kFunctionHeader */ ); }
   /* forward declarations (excludes definition body): */
   | TK_extern method_qualifier_list_opt method_prototype ';'
      { $$ = MakeTaggedNode(N::kForwardDeclaration,
-                        MakeTaggedNode(N::kQualifierList, $1, ForwardChildren($2)),
+                        MakeTaggedNode(N::kQualifierList, $1, GlrForwardChildren($2)),
                         ExtendLastSublist($3, $4) /* kTaskHeader or kFunctionHeader */ ); }
   | TK_extern method_qualifier_list_opt class_constructor_prototype ';'
      { $$ = MakeTaggedNode(N::kForwardDeclaration,
-                        MakeTaggedNode(N::kQualifierList, $1, ForwardChildren($2)),
+                        MakeTaggedNode(N::kQualifierList, $1, GlrForwardChildren($2)),
                         ExtendNode($3, $4)); }
   | class_declaration
     { $$ = std::move($1); }
@@ -1287,7 +1323,7 @@ preprocessor_balanced_class_items
     preprocessor_else_class_item_opt
     PP_endif
     { $$ = MakeTaggedNode(N::kPreprocessorBalancedClassItems,
-                          ExtendNode($1, $2), ForwardChildren($3), $4, $5);
+                          ExtendNode($1, $2), GlrForwardChildren($3), $4, $5);
     }
   ;
 preprocessor_elsif_class_items_opt
@@ -1594,7 +1630,7 @@ preprocessor_balanced_constraint_block_item
     preprocessor_else_constraint_block_item_opt
     PP_endif
     { $$ = MakeTaggedNode(N::kPreprocessorBalancedConstraintBlockItem,
-                          ExtendNode($1, $2), ForwardChildren($3), $4, $5);
+                          ExtendNode($1, $2), GlrForwardChildren($3), $4, $5);
     }
   ;
 preprocessor_elsif_constraint_block_items_opt
@@ -1711,7 +1747,7 @@ preprocessor_balanced_constraint_expressions
     preprocessor_else_constraint_expression_opt
     PP_endif
     { $$ = MakeTaggedNode(N::kPreprocessorBalancedConstraintExpressions,
-                          ExtendNode($1, $2), ForwardChildren($3), $4, $5);
+                          ExtendNode($1, $2), GlrForwardChildren($3), $4, $5);
     }
   ;
 preprocessor_elsif_constraint_expressions_opt
@@ -1783,7 +1819,7 @@ data_declaration_base
                                        node[2],  /* unpacked dimensions */
                                        $2),
                                    $3,  /* ',' */
-                                   ForwardChildren($4))),
+                                   GlrForwardChildren($4))),
                 $5);
     }
   | data_type_or_implicit_basic_followed_by_id_and_dimensions_opt
@@ -1879,7 +1915,7 @@ data_type
   : data_type_base /* decl_dimensions_opt */
     { $$ = std::move($1); }
   | reference
-    { $$ = ReinterpretReferenceAsDataTypePackedDimensions($1); }
+    { SymbolPtr tmp($1); $$ = ReinterpretReferenceAsDataTypePackedDimensions(tmp); }
   ;
 
 interface_type
@@ -2288,7 +2324,7 @@ preprocessor_balanced_description_items
     preprocessor_else_description_item_opt
     PP_endif
     { $$ = MakeTaggedNode(N::kPreprocessorBalancedDescriptionItems,
-                          ExtendNode($1, $2), ForwardChildren($3), $4, $5);
+                          ExtendNode($1, $2), GlrForwardChildren($3), $4, $5);
     }
   ;
 preprocessor_elsif_description_items_opt
@@ -2368,7 +2404,7 @@ function_prototype
     tf_port_list_paren_opt
     { $$ = MakeTaggedNode(N::kFunctionPrototype,
                           MakeFunctionHeader(qualifier_placeholder,
-                                             $1, $2, ForwardChildren($3), $4)); }
+                                             $1, $2, GlrForwardChildren($3), $4)); }
     /* Without port list, is suitable for export declarations. */
   ;
 
@@ -2391,7 +2427,7 @@ function_declaration
     block_item_or_statement_or_null_list_opt
     TK_endfunction endfunction_label_opt
     { $$ = MakeFunctionDeclaration(qualifier_placeholder, $1, $2,
-                                   ForwardChildren($3),  // expand type id pair
+                                   GlrForwardChildren($3),  // expand type id pair
                                    MakeParenGroup($4, $5, $6),
                                    $7, nullptr, $8, $9, $10); }
   | TK_function lifetime_opt
@@ -2400,20 +2436,20 @@ function_declaration
     statement_or_null_list_opt
     TK_endfunction endfunction_label_opt
     { $$ = MakeFunctionDeclaration(qualifier_placeholder, $1, $2,
-                                   ForwardChildren($3),  // expand type id pair
+                                   GlrForwardChildren($3),  // expand type id pair
                                    nullptr, $4, $5, $6, $7, $8); }
   | TK_function lifetime_opt
     function_return_type_and_id ';'
     statement_or_null_list_opt
     TK_endfunction endfunction_label_opt
     { $$ = MakeFunctionDeclaration(qualifier_placeholder, $1, $2,
-                                   ForwardChildren($3),  // expand type id pair
+                                   GlrForwardChildren($3),  // expand type id pair
                                    nullptr, $4, nullptr, $5, $6, $7); }
   ;
 
 endfunction_label_opt
   : label_opt
-    { $$ = $1 ? MakeTaggedNode(N::kFunctionEndlabel, ForwardChildren($1))
+    { $$ = $1 ? MakeTaggedNode(N::kFunctionEndlabel, GlrForwardChildren($1))
               : nullptr; }
   | ':' TK_new
     /* for constructors */
@@ -2966,7 +3002,7 @@ preprocessor_balanced_package_items
     preprocessor_else_package_item_opt
     PP_endif
     { $$ = MakeTaggedNode(N::kPreprocessorBalancedPackageItems,
-                          ExtendNode($1, $2), ForwardChildren($3), $4, $5);
+                          ExtendNode($1, $2), GlrForwardChildren($3), $4, $5);
     }
   ;
 preprocessor_elsif_package_items_opt
@@ -3704,7 +3740,7 @@ pos_neg_number
   : number
     { $$ = std::move($1); }
   | '-' number
-    { $$ = MakeTaggedNode(N::kNumber, $1, ForwardChildren($2)); }
+    { $$ = MakeTaggedNode(N::kNumber, $1, GlrForwardChildren($2)); }
   ;
 enum_name
   : GenericIdentifier
@@ -4067,14 +4103,14 @@ liblist_clause
   ;
 use_clause
   : TK_use lib_cell_id opt_config
-    { $$ = MakeTaggedNode(N::kUseClause, $1, $2, nullptr, ForwardChildren($3)); }
+    { $$ = MakeTaggedNode(N::kUseClause, $1, $2, nullptr, GlrForwardChildren($3)); }
 /* TODO(b/124600414): This has a S/R conflict because ('.' ID) is in both parts.
   Why is there no separator between these in the official grammar??
   | TK_use lib_cell_id named_parameter_assignment_list opt_config
-    { $$ = MakeTaggedNode(N::kUseClause, $1, $2, $3, ForwardChildren($3)); }
+    { $$ = MakeTaggedNode(N::kUseClause, $1, $2, $3, GlrForwardChildren($3)); }
  */
   | TK_use named_parameter_assignment_list opt_config
-    { $$ = MakeTaggedNode(N::kUseClause, $1, nullptr, $2, ForwardChildren($3)); }
+    { $$ = MakeTaggedNode(N::kUseClause, $1, nullptr, $2, GlrForwardChildren($3)); }
   ;
 
 preprocessor_balanced_config_rule_statements
@@ -4083,7 +4119,7 @@ preprocessor_balanced_config_rule_statements
     preprocessor_else_config_rule_statement_opt
     PP_endif
     { $$ = MakeTaggedNode(N::kPreprocessorBalancedConfigRuleStatements,
-                          ExtendNode($1, $2), ForwardChildren($3), $4, $5);
+                          ExtendNode($1, $2), GlrForwardChildren($3), $4, $5);
     }
   ;
 preprocessor_elsif_config_rule_statements_opt
@@ -4502,20 +4538,20 @@ expr_mintypmax_trans_set
   /* TODO(jeremycs): reconsider decision to flatten here*/
   /* TK_EG is the separator in trans_set */
   : expr_mintypmax_trans_set TK_EG expr_mintypmax_generalized
-    { $$ = ExtendNode($1, $2, ForwardChildren($3)); }
+    { $$ = ExtendNode($1, $2, GlrForwardChildren($3)); }
   | expr_mintypmax_generalized
-    { $$ = IsExpression($1) ? std::move($1)
-                            : MakeTaggedNode(N::kMinTypMaxList, ForwardChildren($1)); }
+    { $$ = IsExpressionValue(*$1) ? SymbolPtr($1)
+                            : MakeTaggedNode(N::kMinTypMaxList, GlrForwardChildren($1)); }
   ;
 expr_mintypmax_generalized
   /* covers original expr_mintypmax : expression ':' expression ':' expression
    * When this is expected, verify that this has 3 items in the 'list'.
    */
   : expr_mintypmax_generalized ':' property_expr_or_assignment_list
-    { $$ = ExtendNode($1, $2, ForwardChildren($3)); }
+    { $$ = ExtendNode($1, $2, GlrForwardChildren($3)); }
   | property_expr_or_assignment_list  /* ','-separated */
-    { $$ = IsExpression($1) ? std::move($1)
-                            : MakeTaggedNode(N::kMinTypMaxList, ForwardChildren($1)); }
+    { $$ = IsExpressionValue(*$1) ? SymbolPtr($1)
+                            : MakeTaggedNode(N::kMinTypMaxList, GlrForwardChildren($1)); }
   /* for trans_list, each of these can be an open_range_list,
    * for all other contexts, these should be single value_range.
    */
@@ -4525,7 +4561,7 @@ property_expr_or_assignment_list
   : property_expr_or_assignment_list ',' property_expr_or_assignment
     { $$ = ExtendNode($1, $2, $3); }
   | property_expr_or_assignment
-    { $$ = IsExpression($1) ? std::move($1)
+    { $$ = IsExpressionValue(*$1) ? SymbolPtr($1)
                             : MakeTaggedNode(N::kMinTypMaxList, $1); }
   ;
 property_expr_or_assignment
@@ -5245,7 +5281,7 @@ preprocessor_balanced_port_declarations
     preprocessor_else_port_declarations_opt
     PP_endif
     { $$ = MakeTaggedNode(N::kPreprocessorBalancedPortDeclarations,
-                          ExtendNode($1, $2), ForwardChildren($3), $4, $5);
+                          ExtendNode($1, $2), GlrForwardChildren($3), $4, $5);
     }
   | MacroGenericItem
     { $$ = std::move($1); }
@@ -5325,13 +5361,13 @@ port_declaration_noattr
   : port_direction var_or_net_type_opt
     data_type_or_implicit_basic_followed_by_id_and_dimensions_opt
     trailing_assign_opt
-    { $$ = MakeTaggedNode(N::kPortDeclaration, $1, $2, ForwardChildren($3), $4); }
+    { $$ = MakeTaggedNode(N::kPortDeclaration, $1, $2, GlrForwardChildren($3), $4); }
     // TODO(fangism): inout's cannot have variable port types,
     // so this needs to be enforced in CST validation.
   | net_type data_type_or_implicit_basic_followed_by_id_and_dimensions_opt
     trailing_assign_opt
     { $$ = MakeTaggedNode(N::kPortDeclaration, nullptr, $1,
-                          ForwardChildren($2), $3); }
+                          GlrForwardChildren($2), $3); }
   | data_type_primitive GenericIdentifier decl_dimensions_opt trailing_assign_opt
     { $$ = MakeTaggedNode(N::kPortDeclaration, nullptr, nullptr,
                           // just expand without ForwardChildren:
@@ -5344,7 +5380,7 @@ port_declaration_noattr
                           $4); }
   /* user-defined types: including interface_port_declaration */
   | type_identifier_followed_by_id decl_dimensions_opt trailing_assign_opt
-    { $$ = MakeTaggedNode(N::kPortDeclaration, nullptr, nullptr, ForwardChildren($1),
+    { $$ = MakeTaggedNode(N::kPortDeclaration, nullptr, nullptr, GlrForwardChildren($1),
                           MakeUnpackedDimensionsNode($2), $3); }
   ;
 var_or_net_type_opt
@@ -5623,12 +5659,12 @@ module_port_declaration
   | port_direction port_net_type signed_unsigned_opt decl_dimensions_opt
     list_of_identifiers_unpacked_dimensions ';'
     { $$ = MakeTaggedNode(N::kModulePortDeclaration, $1,
-                          MakeDataType($3, ForwardChildren($2), MakePackedDimensionsNode($4)),
+                          MakeDataType($3, GlrForwardChildren($2), MakePackedDimensionsNode($4)),
                           $5, $6); }
   | dir var_type signed_unsigned_opt decl_dimensions_opt
     list_of_port_identifiers ';'
     { $$ = MakeTaggedNode(N::kModulePortDeclaration, $1,
-                          MakeDataType($3, ForwardChildren($2), MakePackedDimensionsNode($4)),
+                          MakeDataType($3, GlrForwardChildren($2), MakePackedDimensionsNode($4)),
                           $5, $6); }
   ;
 
@@ -5767,7 +5803,7 @@ final_construct
 
 analog_construct
   : /* attribute_list_opt */ TK_analog analog_statement
-    { $$ = MakeTaggedNode(N::kAnalogStatement, $1, ForwardChildren($2)); }
+    { $$ = MakeTaggedNode(N::kAnalogStatement, $1, GlrForwardChildren($2)); }
   ;
 
 module_common_item
@@ -5899,7 +5935,7 @@ preprocessor_balanced_module_items
     preprocessor_else_module_item_opt
     PP_endif
     { $$ = MakeTaggedNode(N::kPreprocessorBalancedModuleItems,
-                          ExtendNode($1, $2), ForwardChildren($3), $4, $5);
+                          ExtendNode($1, $2), GlrForwardChildren($3), $4, $5);
     }
   ;
 preprocessor_elsif_module_items_opt
@@ -5997,7 +6033,7 @@ preprocessor_balanced_generate_items
     preprocessor_else_generate_item_opt
     PP_endif
     { $$ = MakeTaggedNode(N::kPreprocessorBalancedGenerateItems,
-                          ExtendNode($1, $2), ForwardChildren($3), $4, $5);
+                          ExtendNode($1, $2), GlrForwardChildren($3), $4, $5);
     }
   ;
 preprocessor_elsif_generate_items_opt
@@ -7021,7 +7057,7 @@ preprocessor_balanced_statements
     preprocessor_else_statement_opt
     PP_endif
     { $$ = MakeTaggedNode(N::kPreprocessorBalancedStatements,
-                          ExtendNode($1, $2), ForwardChildren($3), $4, $5);
+                          ExtendNode($1, $2), GlrForwardChildren($3), $4, $5);
     }
   ;
 preprocessor_elsif_statements_opt
@@ -7530,9 +7566,9 @@ let_port_list
 let_port_item
   : let_formal_type_followed_by_id decl_dimensions_opt
     /* $2 is not limited to being an unpacked dimension */
-    { $$ = MakeTaggedNode(N::kLetPortItem, ForwardChildren($1), $2); }
+    { $$ = MakeTaggedNode(N::kLetPortItem, GlrForwardChildren($1), $2); }
   | let_formal_type_followed_by_id decl_dimensions_opt '=' expression
-    { $$ = MakeTaggedNode(N::kLetPortItem, ForwardChildren($1), $2, $3, $4); }
+    { $$ = MakeTaggedNode(N::kLetPortItem, GlrForwardChildren($1), $2, $3, $4); }
   ;
 let_formal_type_followed_by_id
   /* similar to property_formal_type_followed_by_id */
@@ -7863,7 +7899,7 @@ property_implication_expr
   : property_implication_expr property_operator property_prefix_expr
     { $$ = ExtendNode($1, $2, $3); }
   | property_prefix_expr
-    { $$ = IsExpression($1) ? std::move($1)
+    { $$ = IsExpressionValue(*$1) ? SymbolPtr($1)
                             : MakeTaggedNode(N::kPropertyImplicationList, $1); }
   ;
 
@@ -7924,7 +7960,7 @@ sequence_match_item_list
 sequence_expr_match_item_list
   : property_expr ',' sequence_match_item_list
     { $$ = MakeTaggedNode(N::kSequenceMatchItemList, $1, $2,
-                          ForwardChildren($3)); }
+                          GlrForwardChildren($3)); }
   | property_expr
     { $$ = MakeTaggedNode(N::kSequenceMatchItemList, $1); }
   ;
@@ -7946,42 +7982,42 @@ sequence_or_expr
   : sequence_or_expr TK_or sequence_and_expr
     { $$ = MakeBinaryExpression($1, $2, $3); }
   | sequence_and_expr
-    { $$ = IsExpression($1) ? std::move($1) : std::move($1); }
+    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
   ;
 sequence_and_expr
   : sequence_and_expr TK_and sequence_unary_expr
     { $$ = MakeBinaryExpression($1, $2, $3); }
   | sequence_unary_expr
-    { $$ = IsExpression($1) ? std::move($1) : std::move($1); }
+    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
 sequence_unary_expr
   : sequence_intersect_expr
-    { $$ = IsExpression($1) ? std::move($1) : std::move($1); }
+    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
   | TK_not sequence_intersect_expr
     { $$ = MakeTaggedNode(N::kUnaryPrefixExpression, $1, $2); }
     /* only for property_expr */
   ;
 sequence_intersect_expr
   : sequence_within_expr
-    { $$ = IsExpression($1) ? std::move($1) : std::move($1); }
+    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
   | sequence_intersect_expr TK_intersect sequence_within_expr
     { $$ = MakeBinaryExpression($1, $2, $3); }
   ;
 sequence_within_expr
   : sequence_throughout_expr
-    { $$ = IsExpression($1) ? std::move($1) : std::move($1); }
+    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
   | sequence_within_expr TK_within sequence_throughout_expr
     { $$ = MakeBinaryExpression($1, $2, $3); }
   ;
 sequence_throughout_expr
   : sequence_delay_range_expr
-    { $$ = IsExpression($1) ? std::move($1) : std::move($1); }
+    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
   | sequence_throughout_expr TK_throughout sequence_delay_range_expr
     { $$ = MakeBinaryExpression($1, $2, $3); }
   ;
 
 sequence_delay_range_expr
   : sequence_delay_repetition_list
-    { $$ = IsExpression($1) ? std::move($1) : std::move($1); }
+    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
   | cycle_delay_range sequence_delay_repetition_list
     { $$ = MakeTaggedNode(N::kSequenceDelayRange, $1, $2); }
   ;
@@ -7989,7 +8025,7 @@ sequence_delay_repetition_list
   : sequence_delay_repetition_list cycle_delay_range sequence_expr_primary
     { $$ = MakeTaggedNode(N::kSequenceDelayRepetition, $1, $2, $3); }
   | sequence_expr_primary
-    { $$ = IsExpression($1) ? std::move($1) : std::move($1); }
+    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
   ;
 
 cycle_delay
@@ -8044,7 +8080,7 @@ dist_list
   ;
 dist_item
   : value_range dist_weight
-    { $$ = MakeTaggedNode(N::kDistributionItem, $1, ForwardChildren($2)); }
+    { $$ = MakeTaggedNode(N::kDistributionItem, $1, GlrForwardChildren($2)); }
   | value_range
     { $$ = MakeTaggedNode(N::kDistributionItem, $1, nullptr, nullptr); }
   ;
@@ -8100,7 +8136,7 @@ sequence_expr_match_primary
 sequence_repetition_expr
   /* Highest precedence sequence_expr. */
   : expression_or_dist boolean_abbrev_opt
-    { $$ = ($2 == nullptr) ? std::move($1) :
+    { $$ = ($2 == nullptr) ? SymbolPtr($1) :
                              MakeTaggedNode(N::kSequenceRepetitionExpression,
                                             $1, $2); }
   /* This covers a simple expression.
@@ -8363,7 +8399,7 @@ preprocessor_balanced_bins_or_options_list
     preprocessor_else_bins_or_options_opt
     PP_endif
     { $$ = MakeTaggedNode(N::kPreprocessorBalancedBinsOrOptions,
-                          ExtendNode($1, $2), ForwardChildren($3), $4, $5);
+                          ExtendNode($1, $2), GlrForwardChildren($3), $4, $5);
     }
   ;
 preprocessor_elsif_bins_or_options_list_opt
@@ -8696,9 +8732,8 @@ case_item_expression
 
 %%
 
-// Ensure type consistency with StateStack in parser_param.h
-static_assert(std::is_same<yytype_int16, verible::bison_state_int_type>::value,
-    "Update bison_state_int_type in parser_param.h to match yy.tab.cc.");
+// Note: yytype_int16 type check removed for GLR compatibility.
+// GLR mode may not expose this internal Bison type.
 
 // Expose the token names for diagnostic messages.
 const char* verilog_symbol_name(size_t symbol_enum) {

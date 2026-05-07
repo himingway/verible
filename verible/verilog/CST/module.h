@@ -44,7 +44,7 @@ verible::SymbolPtr MakeModuleHeader(T0 &&keyword, T1 &&lifetime, T2 &&id,
   verible::CheckOptionalSymbolAsNode(ports, NodeEnum::kParenGroup);
   verible::CheckOptionalSymbolAsNode(attribute,
                                      NodeEnum::kModuleAttributeForeign);
-  ExpectString(semi, ";");
+  ExpectString(semi.get(), ";");
   return verible::MakeTaggedNode(
       NodeEnum::kModuleHeader, std::forward<T0>(keyword),
       std::forward<T1>(lifetime), std::forward<T2>(id),

@@ -28,9 +28,9 @@ namespace verible {
 // token. This no longer calls yylex(), but insteads pulls a token from a token
 // stream. 'value' points to yylval in yyparse(), which can be accessed as $1,
 // $2, ... in the yacc grammar semantic actions.
-int LexAdapter(SymbolPtr *value, ParserParam *param) {
+int LexAdapter(GlrSymbolValue *value, ParserParam *param) {
   const auto &last_token = param->FetchToken();
-  value->reset(new SyntaxTreeLeaf(last_token));
+  *value = SymbolPtr(new SyntaxTreeLeaf(last_token));
   return last_token.token_enum();
 }
 

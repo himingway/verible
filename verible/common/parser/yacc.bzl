@@ -14,14 +14,13 @@
 
 """This module defines yacc/bison-related rules."""
 
-def std_move_parser_symbols(name, src, out):
-    """Convert symbol assignments (=) to std::move.
+def remove_const_from_glr_stack(name, src, out):
+    """Remove const qualifier from GLR stack item access.
 
-    transformations:
-      *++yyvsp = yylval;       -> *++yyvsp = std::move(yylval);
-      *++yyvsp = yyval;        -> *++yyvsp = std::move(yyval);
-      (= yyval_default)        -> (= std::move(yyval_default))
-      yyval = yyvsp[1-yylen];  -> deleted (see comment in generated code)
+    Bison GLR casts stack access to 'yyGLRStackItem const *', making all
+    $n values const. This prevents calling non-const methods like the
+    ownership-releasing operator SymbolPtr() on GlrSymbolValue.
+    This rule patches the generated code to use mutable stack access.
 
     Args:
       name: name of this label.
@@ -32,10 +31,7 @@ def std_move_parser_symbols(name, src, out):
         name = name,
         srcs = [src],
         outs = [out],
-        cmd = r"sed -e '/= yylval;/s|yylval|std::move(&)|' \
-           -e '/= yyval;/s|yyval|std::move(&)|' \
-           -e '/(= yyval_default)/s|yyval_default|std::move(&)|' \
-           -e '/yyval = yyvsp\[1-yylen\];/s|yyval|// &|' < $< > $@",
+        cmd = "sed -e 's/yyGLRStackItem const \\*/yyGLRStackItem */g' < $< > $@",
     )
 
 def record_recovered_syntax_errors(name, src, out):
@@ -50,7 +46,7 @@ def record_recovered_syntax_errors(name, src, out):
         name = name,
         srcs = [src],
         outs = [out],
-        cmd = r"sed -e '/++yynerrs;/a\
+        cmd = r"sed -e '/yynerrs += 1;/a\
           // Automatically patched by >>record_recovered_syntax_errors<< rule:\
           param->RecordSyntaxError(yylval);\
           // end of automatic patch\

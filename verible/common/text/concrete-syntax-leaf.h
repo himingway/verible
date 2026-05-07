@@ -62,6 +62,10 @@ class SyntaxTreeLeaf final : public Symbol {
   SymbolKind Kind() const final { return SymbolKind::kLeaf; }
   SymbolTag Tag() const final { return LeafTag(get().token_enum()); }
 
+  SymbolPtr Clone() const final {
+    return SymbolPtr(new SyntaxTreeLeaf(token_));
+  }
+
  private:
   TokenInfo token_;
 };

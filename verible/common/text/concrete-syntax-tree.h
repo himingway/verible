@@ -165,6 +165,18 @@ class SyntaxTreeNode final : public Symbol {
   SymbolKind Kind() const final { return SymbolKind::kNode; }
   SymbolTag Tag() const final { return NodeTag(tag_); }
 
+  SymbolPtr Clone() const final {
+    auto *copy = new SyntaxTreeNode(tag_);
+    for (const auto &child : children_) {
+      if (child) {
+        copy->children_.emplace_back(child->Clone());
+      } else {
+        copy->children_.emplace_back(nullptr);
+      }
+    }
+    return SymbolPtr(copy);
+  }
+
   // MatchesTag returns true if the tag value matches the argument.
   // This is designed to work with any enumeration type.
   template <typename EnumType>

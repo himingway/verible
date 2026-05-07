@@ -46,9 +46,17 @@ std::string EmbedInClassMethod(std::string_view text) {
 }
 
 void ExpectString(const verible::SymbolPtr &symbol, std::string_view expected) {
-  const verible::SyntaxTreeLeaf *leaf = verible::MaybeLeaf(symbol.get());
+  ExpectString(symbol.get(), expected);
+}
+
+void ExpectString(const verible::Symbol *symbol, std::string_view expected) {
+  const verible::SyntaxTreeLeaf *leaf = verible::MaybeLeaf(symbol);
   CHECK(leaf != nullptr) << "expected: " << expected;
   CHECK_EQ(leaf->get().text(), expected);
+}
+
+void ExpectString(std::nullptr_t, std::string_view expected) {
+  LOG(FATAL) << "expected: " << expected;
 }
 
 }  // namespace verilog

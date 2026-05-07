@@ -6,7 +6,7 @@ load("//bazel:flex.bzl", "genlex")
 load(
     "//verible/common/parser:yacc.bzl",
     "record_recovered_syntax_errors",
-    "std_move_parser_symbols",
+    "remove_const_from_glr_stack",
 )
 
 package(
@@ -108,15 +108,15 @@ genyacc(
     source_out = "verilog.tab.cc",
 )
 
-std_move_parser_symbols(
-    name = "verilog-y-moved",
+remove_const_from_glr_stack(
+    name = "verilog-y-mutable",
     src = "verilog.tab.cc",
-    out = "verilog-moved.tab.cc",
+    out = "verilog-mutable.tab.cc",
 )
 
 record_recovered_syntax_errors(
     name = "verilog-y-final",
-    src = "verilog-moved.tab.cc",
+    src = "verilog-mutable.tab.cc",
     out = "verilog-final.tab.cc",
 )
 

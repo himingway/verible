@@ -38,7 +38,7 @@ verible::SymbolPtr MakeFunctionHeader(T0 &&qualifiers, T1 &&function_start,
                                       T2 &&lifetime, T3 &&return_type_id,
                                       T4 &&ports) {
   verible::CheckOptionalSymbolAsNode(qualifiers, NodeEnum::kQualifierList);
-  ExpectString(function_start, "function");
+  ExpectString(function_start.get(), "function");
   verible::CheckOptionalSymbolAsNode(ports, NodeEnum::kParenGroup);
   return verible::MakeTaggedNode(
       NodeEnum::kFunctionHeader, std::forward<T0>(qualifiers),
@@ -54,7 +54,7 @@ template <typename T0, typename T1, typename T2, typename T3, typename T4,
 verible::SymbolPtr MakeFunctionHeader(T0 &&qualifiers, T1 &&function_start,
                                       T2 &&lifetime, T3 &&return_type_id,
                                       T4 &&ports, T5 &&semicolon) {
-  ExpectString(semicolon, ";");
+  ExpectString(semicolon.get(), ";");
   return ExtendNode(
       MakeFunctionHeader(
           std::forward<T0>(qualifiers), std::forward<T1>(function_start),
@@ -72,7 +72,7 @@ verible::SymbolPtr MakeFunctionDeclaration(T0 &&qualifiers, T1 &&function_start,
                                            T4 &&ports, T5 &&semicolon,
                                            T6 &&function_items, T7 &&body,
                                            T8 &&function_end, T9 &&label) {
-  ExpectString(function_end, "endfunction");
+  ExpectString(function_end.get(), "endfunction");
   return verible::MakeTaggedNode(
       NodeEnum::kFunctionDeclaration,
       MakeFunctionHeader(

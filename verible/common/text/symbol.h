@@ -76,6 +76,9 @@ class Symbol {
   virtual SymbolKind Kind() const = 0;
   virtual SymbolTag Tag() const = 0;
 
+  // Deep-copy clone for GLR parser stack splitting support.
+  virtual SymbolPtr Clone() const = 0;
+
  protected:
   Symbol() = default;
 };

@@ -6395,11 +6395,11 @@ TEST(VerilogParserTest, ErrorRecovery) {
   TestVerilogParserErrorRecovery(kErrorRecoveryTests);
 }
 
-// Test parser's internal stack reallocation.
+// Test parser handles deeply nested constructs.
 TEST(VerilogParserTest, InternalStackRealloc) {
   // Construct an input that will grow the symbol stack.
   std::string code("module foo;\ninitial\n");
-  constexpr int depth = YYINITDEPTH * 8;
+  constexpr int depth = 200 * 8;
   for (int i = 0; i < depth; ++i) {
     code += "begin\n";
   }
@@ -6410,8 +6410,6 @@ TEST(VerilogParserTest, InternalStackRealloc) {
   VerilogAnalyzer analyzer(code, "<<inline-text>>");
   auto status = analyzer.Analyze();
   EXPECT_TRUE(status.ok()) << "Unexpected failure on code: " << code;
-  const size_t max_stack_size = analyzer.MaxUsedStackSize();
-  EXPECT_LE(depth, max_stack_size);
 }
 
 // Tests that Tokenize() properly sets the range of the EOF token.

@@ -17,29 +17,9 @@
 #ifndef VERIBLE_COMMON_PARSER_BISON_PARSER_COMMON_H_
 #define VERIBLE_COMMON_PARSER_BISON_PARSER_COMMON_H_
 
+#include "verible/common/parser/glr-symbol-value.h"
 #include "verible/common/parser/parser-param.h"
 #include "verible/common/text/concrete-syntax-tree.h"
-
-// Uncomment the next line for parser debugging. Unfortunately, verbose
-// error printouts result in a compile errors when our own yyoverflow handling
-// is enabled. Therefore, we disable verbose error messages and enable dynamic
-// resizing of the parser stack per default. When both lines are uncommented,
-// verbose error messages will be reported, however the parser stops parsing
-// complex structures due to the limited parser stack size.
-// Same as %error-verbose in .yc file.
-// #define YYERROR_VERBOSE 1
-
-#ifndef YYERROR_VERBOSE
-// Executed when stack size needs to be increased.
-// I1, I2, I3, I4 parameters are derived and ignored.
-#define yyoverflow(I1, StateStack, I2, ValueStack, I3, Size) \
-  param->ResizeStacks(StateStack, ValueStack, Size)
-
-// Initial symbol/state stack depth (internal to yyparse).
-// See ParserParam::ResizeStacks().
-#define YYINITDEPTH 50
-
-#endif  // YYERROR_VERBOSE
 
 // Enable yyparse symbol stack tracing, as parser shifts/reduces.
 // Same as %debug in .yc file.
@@ -54,7 +34,7 @@
 namespace verible {
 
 // Calls to yylex() in generated code will be redirected here.
-int LexAdapter(SymbolPtr *value, ParserParam *param);
+int LexAdapter(GlrSymbolValue *value, ParserParam *param);
 
 // Calls to yyerror() in generated code will be redirected hee.
 void ParseError(const ParserParam *param, const char *function_name,
@@ -71,7 +51,7 @@ void ParseError(const ParserParam *param, const char *function_name,
 // Called by Bison-generated parser to get a next token.
 // TODO(fangism): control yylex prototype using YY_DECL, or embed param inside
 //   FlexLexerAdapter class template.
-inline int yylex(verible::SymbolPtr *value, verible::ParserParam *param) {
+inline int yylex(verible::GlrSymbolValue *value, verible::ParserParam *param) {
   return verible::LexAdapter(value, param);
 }
 

@@ -31,11 +31,20 @@ cc_library(
     srcs = ["bison-parser-common.cc"],
     hdrs = ["bison-parser-common.h"],
     deps = [
+        ":glr-symbol-value",
         ":parser-param",
         "//verible/common/text:concrete-syntax-leaf",
         "//verible/common/text:concrete-syntax-tree",
         "//verible/common/text:token-info",
         "//verible/common/util:logging",
+    ],
+)
+
+cc_library(
+    name = "glr-symbol-value",
+    hdrs = ["glr-symbol-value.h"],
+    deps = [
+        "//verible/common/text:symbol",
     ],
 )
 
