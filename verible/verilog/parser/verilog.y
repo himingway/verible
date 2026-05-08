@@ -106,9 +106,10 @@ static void SetChild(const GlrSymbolValue& parent, int child_index,
 using N = NodeEnum;
 
 // Non-owning check: examines a GlrSymbolValue without consuming it.
-static bool IsExpressionValue(const verible::Symbol& symbol) {
-  if (symbol.Kind() != verible::SymbolKind::kNode) return false;
-  const auto& node = verible::down_cast<const verible::SyntaxTreeNode&>(symbol);
+static bool IsExpressionValue(const verible::Symbol* symbol) {
+  if (symbol == nullptr) return false;
+  if (symbol->Kind() != verible::SymbolKind::kNode) return false;
+  const auto& node = verible::down_cast<const verible::SyntaxTreeNode&>(*symbol);
   return node.MatchesTag(N::kExpression);
 }
 
@@ -4540,7 +4541,7 @@ expr_mintypmax_trans_set
   : expr_mintypmax_trans_set TK_EG expr_mintypmax_generalized
     { $$ = ExtendNode($1, $2, GlrForwardChildren($3)); }
   | expr_mintypmax_generalized
-    { $$ = IsExpressionValue(*$1) ? SymbolPtr($1)
+    { $$ = IsExpressionValue($1.get()) ? SymbolPtr($1)
                             : MakeTaggedNode(N::kMinTypMaxList, GlrForwardChildren($1)); }
   ;
 expr_mintypmax_generalized
@@ -4550,7 +4551,7 @@ expr_mintypmax_generalized
   : expr_mintypmax_generalized ':' property_expr_or_assignment_list
     { $$ = ExtendNode($1, $2, GlrForwardChildren($3)); }
   | property_expr_or_assignment_list  /* ','-separated */
-    { $$ = IsExpressionValue(*$1) ? SymbolPtr($1)
+    { $$ = IsExpressionValue($1.get()) ? SymbolPtr($1)
                             : MakeTaggedNode(N::kMinTypMaxList, GlrForwardChildren($1)); }
   /* for trans_list, each of these can be an open_range_list,
    * for all other contexts, these should be single value_range.
@@ -4561,7 +4562,7 @@ property_expr_or_assignment_list
   : property_expr_or_assignment_list ',' property_expr_or_assignment
     { $$ = ExtendNode($1, $2, $3); }
   | property_expr_or_assignment
-    { $$ = IsExpressionValue(*$1) ? SymbolPtr($1)
+    { $$ = IsExpressionValue($1.get()) ? SymbolPtr($1)
                             : MakeTaggedNode(N::kMinTypMaxList, $1); }
   ;
 property_expr_or_assignment
@@ -7899,7 +7900,7 @@ property_implication_expr
   : property_implication_expr property_operator property_prefix_expr
     { $$ = ExtendNode($1, $2, $3); }
   | property_prefix_expr
-    { $$ = IsExpressionValue(*$1) ? SymbolPtr($1)
+    { $$ = IsExpressionValue($1.get()) ? SymbolPtr($1)
                             : MakeTaggedNode(N::kPropertyImplicationList, $1); }
   ;
 
@@ -7982,42 +7983,42 @@ sequence_or_expr
   : sequence_or_expr TK_or sequence_and_expr
     { $$ = MakeBinaryExpression($1, $2, $3); }
   | sequence_and_expr
-    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
+    { $$ = std::move($1); }
   ;
 sequence_and_expr
   : sequence_and_expr TK_and sequence_unary_expr
     { $$ = MakeBinaryExpression($1, $2, $3); }
   | sequence_unary_expr
-    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
+    { $$ = std::move($1); }
 sequence_unary_expr
   : sequence_intersect_expr
-    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
+    { $$ = std::move($1); }
   | TK_not sequence_intersect_expr
     { $$ = MakeTaggedNode(N::kUnaryPrefixExpression, $1, $2); }
     /* only for property_expr */
   ;
 sequence_intersect_expr
   : sequence_within_expr
-    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
+    { $$ = std::move($1); }
   | sequence_intersect_expr TK_intersect sequence_within_expr
     { $$ = MakeBinaryExpression($1, $2, $3); }
   ;
 sequence_within_expr
   : sequence_throughout_expr
-    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
+    { $$ = std::move($1); }
   | sequence_within_expr TK_within sequence_throughout_expr
     { $$ = MakeBinaryExpression($1, $2, $3); }
   ;
 sequence_throughout_expr
   : sequence_delay_range_expr
-    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
+    { $$ = std::move($1); }
   | sequence_throughout_expr TK_throughout sequence_delay_range_expr
     { $$ = MakeBinaryExpression($1, $2, $3); }
   ;
 
 sequence_delay_range_expr
   : sequence_delay_repetition_list
-    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
+    { $$ = std::move($1); }
   | cycle_delay_range sequence_delay_repetition_list
     { $$ = MakeTaggedNode(N::kSequenceDelayRange, $1, $2); }
   ;
@@ -8025,7 +8026,7 @@ sequence_delay_repetition_list
   : sequence_delay_repetition_list cycle_delay_range sequence_expr_primary
     { $$ = MakeTaggedNode(N::kSequenceDelayRepetition, $1, $2, $3); }
   | sequence_expr_primary
-    { $$ = IsExpressionValue(*$1) ? std::move($1) : std::move($1); }
+    { $$ = std::move($1); }
   ;
 
 cycle_delay

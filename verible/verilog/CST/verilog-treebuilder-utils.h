@@ -56,19 +56,26 @@ void ExpectString(const verible::SymbolPtr &symbol, std::string_view expected);
 void ExpectString(const verible::Symbol *symbol, std::string_view expected);
 void ExpectString(std::nullptr_t, std::string_view expected);
 
+// Dispatches ExpectString for SymbolPtr-like or nullptr arguments.
+template <typename T>
+void ExpectSymbolString(T &&symbol, std::string_view expected) {
+  if constexpr (std::is_same_v<std::decay_t<T>, std::nullptr_t>) {
+    ExpectString(symbol, expected);
+  } else {
+    ExpectString(symbol.get(), expected);
+  }
+}
+
 template <typename T1, typename T2, typename T3>
 verible::SymbolPtr MakeParenGroup(T1 &&left_paren, T2 &&contents,
                                   T3 &&right_paren) {
-  if constexpr (std::is_same_v<std::decay_t<T1>, std::nullptr_t>) {
-    ExpectString(left_paren, "(");
-  } else {
-    ExpectString(left_paren.get(), "(");
-  }
+  ExpectSymbolString(left_paren, "(");
   if (contents != nullptr) {
     if constexpr (std::is_same_v<std::decay_t<T3>, std::nullptr_t>) {
+      // nullptr right_paren with non-null contents is invalid (not error-recovery).
       ExpectString(right_paren, ")");
     } else {
-      if (right_paren != nullptr) ExpectString(right_paren.get(), ")");
+      if (right_paren != nullptr) ExpectSymbolString(right_paren, ")");
     }
   }  // else right_paren might be dropped due to error-recovery
   return verible::MakeTaggedNode(
@@ -79,16 +86,8 @@ verible::SymbolPtr MakeParenGroup(T1 &&left_paren, T2 &&contents,
 template <typename T1, typename T2, typename T3>
 verible::SymbolPtr MakeBracketGroup(T1 &&left_brace, T2 &&contents,
                                     T3 &&right_brace) {
-  if constexpr (std::is_same_v<std::decay_t<T1>, std::nullptr_t>) {
-    ExpectString(left_brace, "[");
-  } else {
-    ExpectString(left_brace.get(), "[");
-  }
-  if constexpr (std::is_same_v<std::decay_t<T3>, std::nullptr_t>) {
-    ExpectString(right_brace, "]");
-  } else {
-    ExpectString(right_brace.get(), "]");
-  }
+  ExpectSymbolString(left_brace, "[");
+  ExpectSymbolString(right_brace, "]");
   return verible::MakeTaggedNode(
       NodeEnum::kBracketGroup, std::forward<T1>(left_brace),
       std::forward<T2>(contents), std::forward<T3>(right_brace));
@@ -97,16 +96,8 @@ verible::SymbolPtr MakeBracketGroup(T1 &&left_brace, T2 &&contents,
 template <typename T1, typename T2, typename T3>
 verible::SymbolPtr MakeBraceGroup(T1 &&left_brace, T2 &&contents,
                                   T3 &&right_brace) {
-  if constexpr (std::is_same_v<std::decay_t<T1>, std::nullptr_t>) {
-    ExpectString(left_brace, "{");
-  } else {
-    ExpectString(left_brace.get(), "{");
-  }
-  if constexpr (std::is_same_v<std::decay_t<T3>, std::nullptr_t>) {
-    ExpectString(right_brace, "}");
-  } else {
-    ExpectString(right_brace.get(), "}");
-  }
+  ExpectSymbolString(left_brace, "{");
+  ExpectSymbolString(right_brace, "}");
   return verible::MakeTaggedNode(
       NodeEnum::kBraceGroup, std::forward<T1>(left_brace),
       std::forward<T2>(contents), std::forward<T3>(right_brace));

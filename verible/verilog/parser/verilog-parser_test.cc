@@ -6399,6 +6399,7 @@ TEST(VerilogParserTest, ErrorRecovery) {
 TEST(VerilogParserTest, InternalStackRealloc) {
   // Construct an input that will grow the symbol stack.
   std::string code("module foo;\ninitial\n");
+  // GLR mode does not expose YYINITDEPTH; 200 is its typical default value.
   constexpr int depth = 200 * 8;
   for (int i = 0; i < depth; ++i) {
     code += "begin\n";
